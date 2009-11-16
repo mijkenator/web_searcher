@@ -11,7 +11,7 @@
     'WAIT_FOR_JOB'/2,
     'WAIT_FOR_WORK'/2
 ]).
-
+-compile(export_all).
 -export([get_job/0, save_url/1]).
 
 -include_lib("stdlib/include/qlc.hrl").
@@ -105,7 +105,7 @@ do_job(Url, State) ->
             %o:format("job ~p headers -> ~p bytes ~n",  [Url, Headers]),
             %io:format("job ~p body length -> ~p bytes ~n", [Url, string:len(Body)]),
             io:format("job ~p body length -> ~p bytes ~n", [Url, size(Body)]),
-            case get_urls(Body, Url, mochi) of
+            case get_urls(Body, Url, binregex) of
             %case get_urls(mochiweb_html:parse(Body), Url) of
                 {ok, M} -> {ok, M};
                 {error, M} -> {error, M}
@@ -120,6 +120,44 @@ get_urls(Html, MainUrl, Type) when Type =:= mochi ->
         Tree -> finding(<<"a">>,<<"href">>, Tree, MainUrl), {ok, done}
     catch
         _:_  -> {error, parser_error}
+    end;
+get_urls(HtmlBinary, MainUrl, Type) when Type =:= binregex ->
+    MainUrlBin = list_to_binary(MainUrl),
+    MainUrl1 = trim_slash(MainUrlBin),
+    Complement = fun(Url) ->
+        case re:run(Url, "^(http|https:\/\/)", [{capture,[1]}]) of
+            nomatch ->
+                Url1 = trim_slash(Url),
+                <<MainUrl1/binary,"/",Url1/binary>>;
+            _ -> Url
+        end
+    end,
+    CheckUrl = fun(Url) ->
+        case re:run(Url, "\.(pdf|mp3|doc|tar|rar|zip|tgz|tar.gz|js|css|tar.bz2|bz2)$", [{capture,[1]}]) of
+            {match, _} -> false;
+            _          -> true
+        end
+    end,
+    GrepHttp = fun(Url) ->
+        case re:run(Url, "^(http|https:\/\/)", [{capture,[1]}]) of
+            {match, _} -> CheckUrl(Url);
+            _          -> false
+        end
+    end,
+    ProcessUrl = fun([{Start, Length}]) ->
+        <<_:Start/binary,Url:Length/binary,_/binary>> = HtmlBinary,
+        %io:format("ProcessUrl1 -> ~p ~n", [Url]),
+        U1 = Complement(Url),
+        %io:format("ProcessUrl2 -> ~p ~n", [U1]),
+        case GrepHttp(U1) of
+            true -> save_url(U1);
+            _    -> false
+        end   
+    end,
+    Reg = "<a\s+\.*?href=['\"]*([^'\"\s]+)['\"]*\s*\.*>",
+    case re:run(HtmlBinary, Reg, [global, {capture,[1]}, {newline,any}]) of
+        {match, A} when is_list(A) -> lists:map(fun(Url) -> ProcessUrl(Url) end, A), {ok, done};
+        _   -> {error, get_url_error}
     end;
 get_urls(HtmlBinary, MainUrl, Type) when Type =:= regex ->
     Html = binary_to_list(HtmlBinary),
@@ -144,7 +182,8 @@ get_urls(HtmlBinary, MainUrl, Type) when Type =:= regex ->
         Url = string:substr(Html, Start+1, Length),
         U1 = Complement(Url),
         case GrepHttp(U1) of
-            true -> save_url(list_to_binary(U1))
+            true -> save_url(list_to_binary(U1));
+            _    -> false
         end   
     end,
     Reg = "<a\s+\.*?href=['\"]*([^'\"\s]+)['\"]*\s*\.*>",
@@ -154,10 +193,25 @@ get_urls(HtmlBinary, MainUrl, Type) when Type =:= regex ->
     end.
 
   
+trim_slash(Str) when is_binary(Str), Str =:= <<"/">> -> <<>>;
+trim_slash(Str) when is_binary(Str) ->
+    <<A:1/binary, B/binary>> = Str,
+    case A of
+        <<"/">> -> trim_last_slash(B);
+        _ -> trim_last_slash(Str)
+    end;
 trim_slash(Str) ->
     {_,LS,_} = regexp:sub(Str, "\/*$", ""),
     {_,RS,_} = regexp:sub(LS, "^\/*", ""),
     RS.
+    
+trim_last_slash(Bin) ->
+    Len = size(Bin) - 1,
+    <<A:Len/binary, B/binary>> = Bin,
+    case B of
+        <<"/">> -> A;
+        _ -> Bin
+    end.
 
 save_url(Url) ->
     case check_not_exists(Url) of

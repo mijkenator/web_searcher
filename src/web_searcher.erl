@@ -21,7 +21,7 @@ start_client2(Opts) ->
 %% Application behaviour callbacks
 %%----------------------------------------------------------------------
 start(_Type, _Args) ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, [20, ws_worker]).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, [50, ws_worker]).
 
 stop(_S) ->
     ok.
