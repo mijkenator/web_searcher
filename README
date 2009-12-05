@@ -1,1 +1,8 @@
-test
+ws1:prepare1().
+eprof:start().
+ws1:start().
+eprof:start_profiling([toProf]).
+
+
+eprof:stop_profiling().
+eprof:total_analyse().
