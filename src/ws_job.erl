@@ -6,6 +6,7 @@
 
 -export([do_this_once/0, do/1, check_not_exists/1]).
 
+-compile(export_all).
 -behaviour(gen_server).
 
 -record(job_state, {
@@ -77,6 +78,15 @@ check_not_exists(Url) ->
         {atomic, {_, _}} -> false;
         _                -> true
     end.
+
+new_job_counter() ->
+    CheckNew = fun(#jobrec{state=State }, Acc) ->
+        case State of
+            new -> Acc + 1;
+            _   -> Acc
+        end
+    end,
+    mnesia:transaction(fun() -> mnesia:foldl(CheckNew, 0, jobrec) end).
 
 worker_checkout(MaxWorkers) ->
     ChildListLength = erlang:length(supervisor:which_children(ws_com_sup)),
