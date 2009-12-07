@@ -4,15 +4,14 @@
 -export([start_link/1]).
 -export([init/1, handle_event/3,
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
--export([do_job/2, trim_slash/1, get_urls/3]).
+-export([do_job/2]).
 
 %% FSM States
 -export([
     'WAIT_FOR_JOB'/2,
     'WAIT_FOR_WORK'/2
 ]).
--compile(export_all).
--export([get_job/0, save_url/1]).
+%-compile(export_all).
 
 -include_lib("stdlib/include/qlc.hrl").
 -include_lib("jobrec.hrl").
@@ -38,7 +37,7 @@ init(Args) ->
   {ok, 'WAIT_FOR_JOB', Args, 10}.
   
 'WAIT_FOR_JOB'(_Other, State) ->
-    case mnesia:transaction(fun() -> get_job() end) of
+    case ws_mnesia:get_job()  of
         {atomic, {ok, NewUrl}} ->
             io:format("'WAIT_FOR_JOB' ~p ~n", [NewUrl]),
             gen_server:cast(ws_job, {ping, self(), NewUrl}),
@@ -105,7 +104,7 @@ do_job(Url, State) ->
             %o:format("job ~p headers -> ~p bytes ~n",  [Url, Headers]),
             %io:format("job ~p body length -> ~p bytes ~n", [Url, string:len(Body)]),
             io:format("job ~p body length -> ~p bytes ~n", [Url, size(Body)]),
-            case get_urls(Body, Url, binregex) of
+            case ws_html:get_urls(Body, Url, binregex) of
             %case get_urls(mochiweb_html:parse(Body), Url) of
                 {ok, M} -> {ok, M};
                 {error, M} -> {error, M}
@@ -115,183 +114,10 @@ do_job(Url, State) ->
             {error, Reason}
     end.
     
-get_urls(Html, MainUrl, Type) when Type =:= mochi ->
-    try mochiweb_html:parse(Html) of
-        Tree -> finding(<<"a">>,<<"href">>, Tree, MainUrl), {ok, done}
-    catch
-        _:_  -> {error, parser_error}
-    end;
-get_urls(HtmlBinary, MainUrl, Type) when Type =:= binregex ->
-    MainUrlBin = list_to_binary(MainUrl),
-    MainUrl1 = trim_slash(MainUrlBin),
-    Complement = fun(Url) ->
-        case re:run(Url, "^(http|https:\/\/)", [{capture,[1]}]) of
-            nomatch ->
-                Url1 = trim_slash(Url),
-                <<MainUrl1/binary,"/",Url1/binary>>;
-            _ -> Url
-        end
-    end,
-    CheckUrl = fun(Url) ->
-        case re:run(Url, "\.(pdf|mp3|doc|tar|rar|zip|tgz|tar.gz|js|css|tar.bz2|bz2)$", [{capture,[1]}]) of
-            {match, _} -> false;
-            _          -> true
-        end
-    end,
-    GrepHttp = fun(Url) ->
-        case re:run(Url, "^(http|https:\/\/)", [{capture,[1]}]) of
-            {match, _} -> CheckUrl(Url);
-            _          -> false
-        end
-    end,
-    ProcessUrl = fun([{Start, Length}]) ->
-        <<_:Start/binary,Url:Length/binary,_/binary>> = HtmlBinary,
-        %io:format("ProcessUrl1 -> ~p ~n", [Url]),
-        U1 = Complement(Url),
-        %io:format("ProcessUrl2 -> ~p ~n", [U1]),
-        case GrepHttp(U1) of
-            true -> save_url(U1);
-            _    -> false
-        end   
-    end,
-    Reg = "<a\s+\.*?href=['\"]*([^'\"\s]+)['\"]*\s*\.*>",
-    case re:run(HtmlBinary, Reg, [global, {capture,[1]}, {newline,any}]) of
-        {match, A} when is_list(A) -> lists:map(fun(Url) -> ProcessUrl(Url) end, A), {ok, done};
-        _   -> {error, get_url_error}
-    end;
-get_urls(HtmlBinary, MainUrl, Type) when Type =:= regex ->
-    Html = binary_to_list(HtmlBinary),
-    Complement = fun(Url) ->
-        case regexp:matches(Url, "^(http|https:\/\/)") of
-            {match, []} -> string:join([trim_slash(MainUrl), trim_slash(Url)], "/");
-            _ -> Url
-        end
-    end,
-    GrepHttp = fun(Url) ->
-        case regexp:matches(Url, "^(http|https:\/\/)") of
-            {match, []} -> false;
-            {match, _A} -> case regexp:matches(Url, "\.(pdf|mp3|doc|tar|rar|zip|tgz|tar.gz|js|css|tar.bz2|bz2)$") of
-                                {match, []} -> true;
-                                {match, _A} -> false;
-                                _           -> true
-                           end;
-            _           -> false
-        end
-    end,
-    ProcessUrl = fun([{Start, Length}]) ->
-        Url = string:substr(Html, Start+1, Length),
-        U1 = Complement(Url),
-        case GrepHttp(U1) of
-            true -> save_url(list_to_binary(U1));
-            _    -> false
-        end   
-    end,
-    Reg = "<a\s+\.*?href=['\"]*([^'\"\s]+)['\"]*\s*\.*>",
-    case re:run(Html, Reg, [global, {capture,[1]}, {newline,any}]) of
-        {match, A} when is_list(A) -> lists:map(fun(Url) -> ProcessUrl(Url) end, A), {ok, done};
-        _   -> {error, get_url_error}
-    end.
-
-  
-trim_slash(Str) when is_binary(Str), Str =:= <<"/">> -> <<>>;
-trim_slash(Str) when is_binary(Str) ->
-    <<A:1/binary, B/binary>> = Str,
-    case A of
-        <<"/">> -> trim_last_slash(B);
-        _ -> trim_last_slash(Str)
-    end;
-trim_slash(Str) ->
-    {_,LS,_} = regexp:sub(Str, "\/*$", ""),
-    {_,RS,_} = regexp:sub(LS, "^\/*", ""),
-    RS.
-    
-trim_last_slash(Bin) ->
-    Len = size(Bin) - 1,
-    <<A:Len/binary, B/binary>> = Bin,
-    case B of
-        <<"/">> -> A;
-        _ -> Bin
-    end.
-
-save_url(Url) ->
-    case check_not_exists(Url) of
-        true ->     Row = #jobrec{url=Url, state=new},
-                    F = fun() -> mnesia:write(Row) end,
-                    mnesia:transaction(F), true;
-        _    ->     false
-    end.
-
-check_not_exists(Url) ->
-    Ans = mnesia:transaction(fun() -> mnesia:select(jobrec, [{#jobrec{state='$1', url=Url}, [], ['$1']}], 1, read) end ),
-    case Ans of
-        {atomic, {[], _}}-> true;
-        {atomic, {_, _}} -> false;
-        _                -> true
-    end.
-    
-get_job() ->
-    Ans = mnesia:select(jobrec, [{#jobrec{state=new, url='$1'}, [], ['$1']}], 1, write),
-    case Ans of
-        {[Url|_], _} -> mnesia:write(#jobrec{url=Url, state=processing}), {ok, Url};
-        _                      ->
-            io:format("GET JOB failed -> ~p ~n", [Ans]),
-            {error, wait_for_job}
-            %mijkutils:sleep(5),
-            %get_job()
-    end.
     
 io_format_wrap(S, Type, Message) ->
     {{Year,Month,Day},{Hour,Min,Sec}} = calendar:now_to_datetime(erlang:now()),
     io:format(S, "~-15w ~2B/~2B/~4B ~2B:~2.10.0B:~2.10.0B  ~p ~n",
     [Type, Month, Day, Year, Hour, Min, Sec, Message]).
-%-------------------------------------------------------------------------------
 
-finding(Pattern, Attribute, Tree, MainUrl) when is_binary(Attribute)->
-    Complement = fun(Url) ->
-        case regexp:matches(Url, "^(http|https:\/\/)") of
-            {match, []} -> string:join([trim_slash(MainUrl), trim_slash(Url)], "/");
-            _ -> Url
-        end
-    end,
-    GrepHttp = fun(Url) ->
-        case regexp:matches(Url, "^(http|https:\/\/)") of
-            {match, []} -> false;
-            {match, _A} -> case regexp:matches(Url, "\.(pdf|mp3|doc|tar|rar|zip|tgz|tar.gz|js|css|tar.bz2|bz2)$") of
-                                {match, []} -> true;
-                                {match, _A} -> false;
-                                _           -> true
-                           end;
-            _           -> false
-        end
-    end,
-    ProcessUrl = fun(Url) ->
-        U1 = Complement(Url),
-        case GrepHttp(U1) of
-            true -> save_url(list_to_binary(U1))
-        end   
-    end,
-    GetAttr = fun(Found) ->
-        {Pattern, Attributes, _} = Found,
-        M = lists:filter(fun(Attr) -> case Attr of {Attribute, _} -> true; _ -> false end end, Attributes),
-        case M of
-            [{Attribute, FoundAttribute} | _] -> ProcessUrl(binary_to_list(FoundAttribute)), {ok};
-            _ -> {error}
-        end
-    end,  
-    lists:map(fun(X) -> GetAttr(X) end, finding(Pattern, [Tree], [])).
-  
-finding(_, [], Collected) ->  
-  Collected;  
-  
-finding(Pattern, [Next | Siblings], Collected) ->  
-    case Next of  
-      {Element, _, Children} ->  
-      case Element of  
-        Pattern ->  
-          finding(Pattern, Siblings ++ Children, Collected ++ [Next]);  
-        _ ->  
-          finding(Pattern, Siblings ++ Children, Collected)  
-      end;  
-    _ ->  
-      finding(Pattern, Siblings, Collected)  
-    end.
+
