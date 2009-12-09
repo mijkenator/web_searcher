@@ -16,7 +16,6 @@
 -include_lib("stdlib/include/qlc.hrl").
 -include_lib("jobrec.hrl").
 
-%-behaviour(gen_server).
 -behaviour(gen_fsm).
 
 -record(worker_state, {
@@ -56,10 +55,6 @@ init(Args) ->
             { memory, M1 } = erlang:process_info (self (), memory),
             io:format("MEMORY1:~p ~p~n", [WorkerName, M1]),
             mnesia:transaction(fun() ->  mnesia:write(#jobrec{url=list_to_binary(Url), state=done}) end);
-            %{ memory, M2 } = erlang:process_info (self (), memory),
-            %io:format("MEMORY2:~p ~p~n", [WorkerName, M2]),
-            %{ memory, M3 } = erlang:process_info (self (), memory),
-            %io:format("MEMORY3:~p ~p~n", [WorkerName, M3]);
         {error, Reason} ->
             mnesia:transaction(fun() ->  mnesia:write(#jobrec{url=list_to_binary(Url), state=fail}) end),
             io:format("job error: ~p~n",  [Reason])
@@ -95,7 +90,6 @@ terminate(_Reason, _StateName, _State) ->
     io:format("Terminate ~n"),
     ok.
 
-
 do_job(Url, State) ->
     io:format("Do job -> ~p ~n", [State]),
     case http:request(get, {Url, []}, [{timeout, 20000}, {autoredirect, true}], [{body_format, binary}]) of
@@ -113,8 +107,7 @@ do_job(Url, State) ->
             io:format("job ~p failed -> ~p ~n", [Url, Reason]),
             {error, Reason}
     end.
-    
-    
+
 io_format_wrap(S, Type, Message) ->
     {{Year,Month,Day},{Hour,Min,Sec}} = calendar:now_to_datetime(erlang:now()),
     io:format(S, "~-15w ~2B/~2B/~4B ~2B:~2.10.0B:~2.10.0B  ~p ~n",

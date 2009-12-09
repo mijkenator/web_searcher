@@ -1,7 +1,7 @@
 -module(ws_mnesia).
 -author('mijkenator@gmail.com').
 
--export([save_url/1, check_not_exists/1, get_job/0, get_job_ntr/0, msleep/1]).
+-export([save_url/1, check_not_exists/1, get_job/0, msleep/1]).
 
 -include_lib("stdlib/include/qlc.hrl").
 -include_lib("jobrec.hrl").
@@ -17,14 +17,12 @@ check_not_exists(Url) ->
         []    -> true;
         _     -> false
     end.
-
-
-get_job()-> mnesia:transaction(fun() -> get_job_ntr() end).
     
-get_job_ntr() ->
-    Ans = mnesia:select(jobrec, [{#jobrec{state=new, url='$1'}, [], ['$1']}], 1, write),
+get_job() ->
+    Ans = mnesia:transaction(fun() -> mnesia:select(jobrec, [{#jobrec{state=new, url='$1'}, [], ['$1']}], 1, write) end),
     case Ans of
-        {[Url|_], _} -> mnesia:write(#jobrec{url=Url, state=processing}), {ok, Url};
+        {atomic, {[Url|_], _}} -> mnesia:transaction(fun() -> mnesia:write(#jobrec{url=Url, state=processing}) end),
+                                  {atomic, {ok, Url}};
         _                      -> msleep(5), get_job()
     end.
     

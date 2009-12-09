@@ -4,7 +4,7 @@
 -export([start_link/1]).
 -export([init/1, code_change/3, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--export([do_this_once/0, do/1, check_not_exists/1]).
+-export([do_this_once/0, do/1]).
 
 -compile(export_all).
 -behaviour(gen_server).
@@ -71,13 +71,13 @@ do(Q) ->
     {atomic, Val} = mnesia:transaction(F),
     Val.
 
-check_not_exists(Url) ->
-    Ans = mnesia:transaction(fun() -> mnesia:select(jobrec, [{#jobrec{state='$1', url=list_to_binary(Url)}, [], ['$1']}], 1, read) end ),
-    case Ans of
-        {atomic, {[], _}}-> true;
-        {atomic, {_, _}} -> false;
-        _                -> true
-    end.
+%check_not_exists(Url) ->
+%    Ans = mnesia:transaction(fun() -> mnesia:select(jobrec, [{#jobrec{state='$1', url=list_to_binary(Url)}, [], ['$1']}], 1, read) end ),
+%    case Ans of
+%        {atomic, {[], _}}-> true;
+%        {atomic, {_, _}} -> false;
+%        _                -> true
+%    end.
 
 new_job_counter() ->
     CheckNew = fun(#jobrec{state=State }, Acc) ->
