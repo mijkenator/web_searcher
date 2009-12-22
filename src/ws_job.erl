@@ -11,7 +11,8 @@
 
 -record(job_state, {
         maxworkers,
-        workbase}).
+        workbase,
+        odbcref}).
 
 -include_lib("stdlib/include/qlc.hrl").
 -include_lib("jobrec.hrl").
@@ -71,14 +72,6 @@ do(Q) ->
     {atomic, Val} = mnesia:transaction(F),
     Val.
 
-%check_not_exists(Url) ->
-%    Ans = mnesia:transaction(fun() -> mnesia:select(jobrec, [{#jobrec{state='$1', url=list_to_binary(Url)}, [], ['$1']}], 1, read) end ),
-%    case Ans of
-%        {atomic, {[], _}}-> true;
-%        {atomic, {_, _}} -> false;
-%        _                -> true
-%    end.
-
 new_job_counter() ->
     CheckNew = fun(#jobrec{state=State }, Acc) ->
         case State of
@@ -92,7 +85,9 @@ worker_checkout(MaxWorkers) ->
     ChildListLength = erlang:length(supervisor:which_children(ws_com_sup)),
     io:format("Current worker count: ~p ~n", [ChildListLength]),
     %NewJobCount = erlang:length(do(qlc:q([X || X <- mnesia:table(jobrec), X#jobrec.state == new]))),
-    NewJobCount = 500,
+    %NewJobCount = 500,
+    {atomic, NewJobCount} = new_job_counter(),
+    io:format("NJC: ~p ~n", [NewJobCount]),
     lists:map(fun(Elem) -> web_searcher:start_client(list_to_atom(string:concat("wsworker",integer_to_list(Elem)))) end,
         additional_worker_list(MaxWorkers, NewJobCount, ChildListLength)).
 

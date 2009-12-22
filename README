@@ -1,7 +1,10 @@
 ws1:prepare1().
 eprof:start().
 ws1:start().
-eprof:start_profiling([toProf]).
+
+application:start(web_searcher).
+eprof:start_profiling([web_searcher]).
+
 
 
 eprof:stop_profiling().

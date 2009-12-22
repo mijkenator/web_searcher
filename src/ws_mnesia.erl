@@ -19,12 +19,17 @@ check_not_exists(Url) ->
     end.
     
 get_job() ->
-    Ans = mnesia:transaction(fun() -> mnesia:select(jobrec, [{#jobrec{state=new, url='$1'}, [], ['$1']}], 1, write) end),
-    case Ans of
-        {atomic, {[Url|_], _}} -> mnesia:transaction(fun() -> mnesia:write(#jobrec{url=Url, state=processing}) end),
-                                  {atomic, {ok, Url}};
-        _                      -> msleep(5), get_job()
+    F = fun() ->
+        case mnesia:select(jobrec, [{#jobrec{state=new, url='$1'}, [], ['$1']}], 1, write) of
+            {[Url|_], _} -> mnesia:write(#jobrec{url=Url, state=processing}), {ok, Url};
+            _            -> {error}
+        end
+    end,
+    case mnesia:transaction(fun() -> F() end ) of
+        {atomic, {ok, Url}} -> {atomic, {ok, Url}};
+        _                   -> msleep(5), get_job()
     end.
+    
     
 msleep(T) when is_integer(T), T > 0 ->
     receive
